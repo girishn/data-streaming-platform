@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "data-streaming-kb": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Users\\n-gir\\claude_workspace\\data-streaming-kb-mcp-server",
+        "run",
+        "python",
+        "server.py"
+      ],
+      "env": {
+        "KB_REPO_PATH": "C:\\Users\\n-gir\\claude_workspace\\data-streaming-design-guide"
+      }
+    }
+  }
+}
