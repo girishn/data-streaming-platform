@@ -90,6 +90,9 @@ def delete_k8s_infrastructure() -> None:
 
 def destroy_cluster_pipeline(cfg: Config, platform_out: dict) -> None:
     step("Destroying cluster pipeline resources (topics, ACLs, API keys, secrets)")
+    if not platform_out.get("cluster_id"):
+        warn("Platform outputs unavailable (state already destroyed) — skipping cluster pipeline destroy")
+        return
     warn("This must also run from inside the VPC — cluster REST endpoint is PrivateLink-only.")
     tf_init("infra/cluster", cfg, cfg.cluster_backend_key)
     tf_destroy("infra/cluster", cfg.cluster_tf_env(platform_out))
