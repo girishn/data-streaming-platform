@@ -1,24 +1,22 @@
-# Cluster-wide default quota floor.
+# Byte-rate quota floor applied to all known platform service accounts.
 #
 # KB Source: 13-Performance-Tuning/quota-management.md
-#   Multi-tenant cluster: set a default (*, *) byte-rate quota as a floor.
-#   Per-team overrides are added as connectors and applications onboard.
+#   Multi-tenant cluster: set a default byte-rate quota floor; per-team
+#   overrides for known high-volume services.
 #
-# [KB_GAP: confluent_kafka_client_quota Terraform resource — default (*,*) syntax]
-# The KB confirms the quota strategy (default floor + per-principal overrides)
-# but does not document the Confluent Terraform provider schema for the
-# confluent_kafka_client_quota resource, specifically whether principals = []
-# creates a true default (*,*) quota or requires a different attribute.
-# Validate against confluent provider v2.x docs before applying.
+# Resolved KB_GAP: confluent_kafka_client_quota requires principals >= 1.
+#   The provider does not support a true (*,*) default quota via principals=[].
+#   Workaround: apply the same floor to each known platform service account.
+#   New application service accounts get a quota resource added at onboarding
+#   time via the self-service pipeline.
 #
-# Sizing rationale (dev cluster, 1 CKU ≈ 250 MB/s aggregate):
-#   10 MB/s per principal leaves headroom for ~24 concurrent producers or
-#   consumers before the default kicks in. Override upward for known
-#   high-volume services via per-principal quota resources.
+# Sizing: dev cluster 1 CKU ≈ 250 MB/s aggregate.
+#   10 MB/s per principal leaves ample headroom for platform accounts.
+#   Override upward for known high-volume connectors via per-principal resources.
 
-resource "confluent_kafka_client_quota" "default_floor" {
-  display_name = "${var.environment_name}-default-floor"
-  description  = "Default byte-rate quota floor — all clients not covered by a specific quota"
+resource "confluent_kafka_client_quota" "terraform_manager_floor" {
+  display_name = "${var.environment_name}-terraform-manager-floor"
+  description  = "Byte-rate quota floor for Terraform cluster pipeline SA"
 
   kafka_cluster {
     id = var.cluster_id
@@ -29,12 +27,49 @@ resource "confluent_kafka_client_quota" "default_floor" {
   }
 
   throughput {
-    ingress_byte_rate = "10485760" # 10 MB/s per principal
-    egress_byte_rate  = "10485760" # 10 MB/s per principal
+    ingress_byte_rate = "10485760" # 10 MB/s
+    egress_byte_rate  = "10485760" # 10 MB/s
   }
 
-  # [KB_GAP] Empty principals list — verify this creates a (*,*) default quota
-  # in the Confluent provider v2.x. If not, this resource may need to be omitted
-  # or restructured.
-  principals = []
+  principals = ["User:${var.sa_terraform_manager_id}"]
+}
+
+resource "confluent_kafka_client_quota" "cfk_connect_floor" {
+  display_name = "${var.environment_name}-cfk-connect-floor"
+  description  = "Byte-rate quota floor for CFK Connect workers"
+
+  kafka_cluster {
+    id = var.cluster_id
+  }
+
+  environment {
+    id = var.environment_id
+  }
+
+  throughput {
+    ingress_byte_rate = "10485760" # 10 MB/s — raise per connector at onboarding
+    egress_byte_rate  = "10485760" # 10 MB/s
+  }
+
+  principals = ["User:${var.sa_cfk_connect_id}"]
+}
+
+resource "confluent_kafka_client_quota" "monitoring_floor" {
+  display_name = "${var.environment_name}-monitoring-floor"
+  description  = "Byte-rate quota floor for monitoring SA"
+
+  kafka_cluster {
+    id = var.cluster_id
+  }
+
+  environment {
+    id = var.environment_id
+  }
+
+  throughput {
+    ingress_byte_rate = "10485760" # 10 MB/s
+    egress_byte_rate  = "10485760" # 10 MB/s
+  }
+
+  principals = ["User:${var.sa_monitoring_id}"]
 }

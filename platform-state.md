@@ -29,7 +29,7 @@
 ## Open / Blocked Decisions
 - **Cluster pipeline apply** — `infra/cluster/` written; awaiting first apply from inside VPC. Unblocks: secret-sync pod, Connect worker auth, SR activation path.
 - **[KB_GAP] Connect ACL operations** — exact READ/WRITE/CREATE/DESCRIBE set per resource type for Connect worker not confirmed by KB. `acls.tf` implements READ/WRITE/DESCRIBE as starting set; validate against Confluent docs before production apply.
-- **[KB_GAP] confluent_kafka_client_quota default (*,*) syntax** — KB confirms default quota strategy but not the Terraform resource syntax for the `principals = []` default. Validate against provider v2.x docs.
+- **quota default resolved** — `principals = []` rejected by provider (minimum 1). Workaround: per-SA quota resources for the three platform accounts. New onboarded SAs get quota added at self-service time.
 - **SR Phase 2** — pending first schema registration; then `--activate-sr` re-run.
 - **Self-service pipeline** (`self-service/`) — OPA policies, onboarding gates. Not started.
 
