@@ -1,0 +1,22 @@
+# Helm chart: confluentinc/confluent-for-kubernetes
+# Chart version: 0.824.x (check https://confluent.github.io/helm-charts for latest)
+# Install: helm upgrade --install confluent-operator confluentinc/confluent-for-kubernetes \
+#            --namespace confluent --create-namespace \
+#            -f values.yaml
+
+# Watch only the confluent namespace — avoids cluster-wide RBAC if not needed
+namespaceList:
+  - confluent
+
+# Operator pod resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Telemetry disabled — metrics exposed via Prometheus scrape on :7778/metrics instead
+telemetry:
+  enabled: false

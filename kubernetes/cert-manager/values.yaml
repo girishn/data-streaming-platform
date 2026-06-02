@@ -1,0 +1,21 @@
+# Helm chart: jetstack/cert-manager
+# Chart version: v1.14.x (check https://charts.jetstack.io for latest)
+# Install: helm upgrade --install cert-manager jetstack/cert-manager \
+#            --namespace cert-manager --create-namespace \
+#            --version v1.14.5 \
+#            -f values.yaml
+
+installCRDs: true
+
+replicaCount: 2
+
+# Needed for cert-manager to work on EKS private clusters
+# (control plane cannot reach webhook via public DNS)
+webhook:
+  hostNetwork: false
+
+# Prometheus metrics
+prometheus:
+  enabled: true
+  servicemonitor:
+    enabled: false  # enable when Prometheus operator is deployed

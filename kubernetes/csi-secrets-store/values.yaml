@@ -1,0 +1,24 @@
+# Helm chart: secrets-store-csi-driver/secrets-store-csi-driver
+# Repo: https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+# Install (driver): helm upgrade --install csi-secrets-store \
+#   secrets-store-csi-driver/secrets-store-csi-driver \
+#   --namespace kube-system -f values.yaml
+#
+# Install (AWS provider): helm upgrade --install secrets-provider-aws \
+#   aws-secrets-provider/secrets-store-csi-driver-provider-aws \
+#   --namespace kube-system --set secrets-store-csi-driver.install=false
+
+# Sync mounted secrets to Kubernetes Secret objects
+# Required so CFK can reference them via secretRef
+syncSecret:
+  enabled: true
+
+# Rotate secrets when they change in Secrets Manager
+enableSecretRotation: true
+rotationPollInterval: 2m
+
+# IRSA annotation for the driver ServiceAccount
+# (ARN injected by Terraform output: csi_secrets_store_irsa_role_arn)
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "" # set via --set or ArgoCD values override

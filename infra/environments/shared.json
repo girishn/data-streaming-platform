@@ -1,0 +1,6 @@
+{
+  "_note": "Update tf_bucket to a globally unique name, e.g. data-streaming-tfstate-<your-aws-account-id>",
+  "tf_bucket": "data-streaming-tfstate-603974305345",
+  "tf_table": "data-streaming-tf-locks",
+  "aws_region": "ap-southeast-2"
+}

@@ -1,0 +1,12 @@
+*.stackdump
+.env
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+# Python
+scripts/.venv/
+__pycache__/
+*.pyc

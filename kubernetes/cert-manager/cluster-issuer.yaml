@@ -1,0 +1,37 @@
+# Self-signed ClusterIssuer used by CFK to generate internal mTLS certificates.
+# CFK mounts these certs for within-cluster communication between components
+# (Connect REST API, worker-to-worker). External Confluent Cloud connections
+# use SASL/TLS — entirely separate auth path.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+# CA certificate — CFK components use this as the trust anchor for internal mTLS
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cfk-ca
+  namespace: confluent
+spec:
+  isCA: true
+  commonName: cfk-ca
+  secretName: cfk-ca-secret
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: cfk-ca-issuer
+  namespace: confluent
+spec:
+  ca:
+    secretName: cfk-ca-secret
