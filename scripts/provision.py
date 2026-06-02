@@ -237,8 +237,13 @@ def print_summary(networking_out: dict, platform_out: dict, eks_out: dict) -> No
   OIDC Provider   : {eks_out.get('oidc_provider_arn', 'n/a')}
 
 [bold]Next steps[/]
-  1. Build cluster pipeline  →  infra/cluster/  (topics, schemas, ACLs)
-  2. Build self-service      →  self-service/   (OPA policies, onboarding gates)""",
+  1. [bold]From inside the VPC[/] — run the cluster pipeline (creates API keys,
+     JAAS secret, topics, ACLs — unblocks secret-sync pod + Connect workers):
+       uv run --project scripts scripts/cluster_pipeline.py --env {eks_out.get('cluster_name', '<env>').split('-')[-1]}
+  2. After first schema registered — activate Schema Registry:
+       scripts/cluster_pipeline.py --env <env> --activate-sr
+       scripts/provision.py --env <env> --skip-terraform
+  3. Build self-service  →  self-service/  (OPA policies, onboarding gates)""",
         title="Summary",
     ))
 

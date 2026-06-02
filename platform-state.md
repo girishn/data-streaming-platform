@@ -1,7 +1,9 @@
 # Platform State
 
 ## Build Phase
-**Infrastructure Pipeline** — Complete. Confluent Cloud base + EKS Terraform applied. cert-manager, CFK operator, CSI Secrets Store driver all running. Connect CR applied (SR block stripped — awaiting cluster pipeline). secret-sync pod deployed (pending JAAS secret from cluster pipeline). Cluster pipeline (topics/schemas/ACLs) not started.
+**Infrastructure Pipeline** — Complete. Confluent Cloud base + EKS Terraform applied. cert-manager, CFK operator, CSI Secrets Store driver all running. Connect CR applied (SR block stripped — awaiting cluster pipeline). secret-sync pod deployed (pending JAAS secret from cluster pipeline).
+
+**Cluster Pipeline** — `infra/cluster/` Terraform written. Awaiting first apply from inside the VPC. Must run via `scripts/cluster_pipeline.py` (not provision.py). Phase 1 (default): API keys + secrets + topics + ACLs + quotas. Phase 2 (`--activate-sr`): SR API key + role binding, after first schema registration.
 
 ## Decisions Made
 
@@ -17,11 +19,18 @@
 | CFK → Confluent Cloud auth | SASL/PLAIN over TLS, API key from Secrets Manager via CSI | `09-Security-Architecture/mtls-oauth.md` + `10-Operational-Patterns/gitops-terraform.md` |
 | IRSA | cfk-connect + csi-secrets-store ServiceAccounts annotated | CLAUDE.md requirement — IRSA everywhere |
 | EKS | Private endpoint only, managed node group m6i.xlarge, 2–6 nodes | Generic AWS Terraform (no KB query required per CLAUDE.md) |
+| Cluster pipeline execution | In-VPC only (bastion/EKS job/CodeBuild) | `10-Operational-Patterns/gitops-terraform.md` + KB gap — PrivateLink REST endpoint validation |
+| Connect worker permissions | ACLs (not RBAC) on internal topics + group | `09-Security-Architecture/rbac.md` — self-managed Connect uses ACLs |
+| Topic naming | `{domain}.{entity}.{event-type}.v{N}` | `topic-design-framework.md` — lowercase dot-separated |
+| Partition sizing | `max(throughput/10MB_s, max_consumers) × 2–3×` | `02-Broker-Infrastructure/partitioning-strategies.md` |
+| SR activation | Two-phase: Phase 1 no SR, Phase 2 `schema_registry_active=true` after first schema | KB gap — ESSENTIALS lazy provisioning; `ADR-013` |
+| Default quota floor | 10 MB/s ingress + egress per principal `(*,*)` | `13-Performance-Tuning/quota-management.md` |
 
 ## Open / Blocked Decisions
-- **Connect SR block** — `schemaRegistry` dependency stripped from Connect CR until cluster pipeline registers first schema; then re-apply with SR endpoint from `infra/platform` output. provision.py handles this via sentinel comments.
-- **secret-sync pod** — will not become Available until cluster pipeline writes `/{env}/confluent/cfk-connect-jaas` to Secrets Manager and registers JAAS config. Expected; non-blocking.
-- **Cluster pipeline** (`infra/cluster/`) — topics, schemas, ACLs, quotas. Not started. Must query KB before any streaming decisions.
+- **Cluster pipeline apply** — `infra/cluster/` written; awaiting first apply from inside VPC. Unblocks: secret-sync pod, Connect worker auth, SR activation path.
+- **[KB_GAP] Connect ACL operations** — exact READ/WRITE/CREATE/DESCRIBE set per resource type for Connect worker not confirmed by KB. `acls.tf` implements READ/WRITE/DESCRIBE as starting set; validate against Confluent docs before production apply.
+- **[KB_GAP] confluent_kafka_client_quota default (*,*) syntax** — KB confirms default quota strategy but not the Terraform resource syntax for the `principals = []` default. Validate against provider v2.x docs.
+- **SR Phase 2** — pending first schema registration; then `--activate-sr` re-run.
 - **Self-service pipeline** (`self-service/`) — OPA policies, onboarding gates. Not started.
 
 ## KB Gaps
@@ -34,6 +43,7 @@
 ## Next Session Start Point
 1. Run `list_topics()` + read this file.
 2. Next build options (choose one):
-   a. **Cluster pipeline** (`infra/cluster/`) — Confluent Cloud-scoped API keys, first topic + schema, ACLs, Secrets Manager JAAS secret. Must be run from inside the VPC. Query KB before partition strategy, ACL model, schema evolution decisions.
+   a. **Apply cluster pipeline from inside VPC** — `scripts/cluster_pipeline.py --env dev`. Validates ACL operations before apply (KB_GAP above must be resolved).
    b. **Self-service pipeline** (`self-service/`) — OPA conftest policies, producer/consumer/connector onboarding gates.
-3. After cluster pipeline: re-run `provision.py` to activate SR block in Connect CR.
+3. After cluster pipeline Phase 1: Connect workers authenticate, secret-sync pod becomes Available.
+4. After first schema registered: `cluster_pipeline.py --env dev --activate-sr`, then `provision.py --env dev --skip-terraform` to restore SR block in Connect CR.

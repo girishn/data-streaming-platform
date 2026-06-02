@@ -88,6 +88,14 @@ def delete_k8s_infrastructure() -> None:
     ok("Kubernetes infrastructure removed")
 
 
+def destroy_cluster_pipeline(cfg: Config, platform_out: dict) -> None:
+    step("Destroying cluster pipeline resources (topics, ACLs, API keys, secrets)")
+    warn("This must also run from inside the VPC — cluster REST endpoint is PrivateLink-only.")
+    tf_init("infra/cluster", cfg, cfg.cluster_backend_key)
+    tf_destroy("infra/cluster", cfg.cluster_tf_env(platform_out))
+    ok("Cluster pipeline resources destroyed")
+
+
 def destroy_eks(cfg: Config, networking_out: dict) -> None:
     step("Destroying EKS cluster")
     tf_init("infra/eks", cfg, cfg.eks_backend_key)
@@ -169,10 +177,15 @@ def main() -> None:
     delete_k8s_infrastructure()
 
     if not args.k8s_only:
-        # Read networking outputs first so platform/eks destroy can build their TF env
+        # Read networking + platform outputs to feed downstream destroy envs
         tf_init("infra/networking", cfg, cfg.networking_backend_key)
         networking_out = tf_outputs("infra/networking", cfg.networking_tf_env())
 
+        tf_init("infra/platform", cfg, cfg.platform_backend_key)
+        platform_out = tf_outputs("infra/platform", cfg.platform_tf_env(networking_out))
+
+        # Cluster resources (topics/ACLs/keys) must be destroyed before the cluster itself
+        destroy_cluster_pipeline(cfg, platform_out)
         destroy_eks(cfg, networking_out)
         destroy_platform(cfg, networking_out)
         destroy_networking(cfg)  # last — platform owns PrivateLink ENIs bound to the VPC

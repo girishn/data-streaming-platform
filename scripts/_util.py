@@ -151,6 +151,10 @@ class Config:
     def eks_backend_key(self) -> str:
         return f"{self.env}/eks/terraform.tfstate"
 
+    @property
+    def cluster_backend_key(self) -> str:
+        return f"{self.env}/cluster/terraform.tfstate"
+
     def networking_tf_env(self) -> dict[str, str]:
         return {
             **os.environ,
@@ -199,6 +203,23 @@ class Config:
             "TF_VAR_node_desired_size":             str(self.node_desired_size),
             "TF_VAR_endpoint_public_access":        str(self.endpoint_public_access).lower(),
             "TF_VAR_public_access_cidrs":           json.dumps(self.public_access_cidrs),
+        }
+
+    def cluster_tf_env(self, platform_out: dict) -> dict[str, str]:
+        """TF_VAR env for infra/cluster — requires platform pipeline outputs."""
+        return {
+            **os.environ,
+            "TF_VAR_environment_name":          self.environment_name,
+            "TF_VAR_confluent_cloud_api_key":    self.confluent_api_key,
+            "TF_VAR_confluent_cloud_api_secret": self.confluent_api_secret,
+            "TF_VAR_aws_account_id":             self.aws_account_id,
+            "TF_VAR_aws_region":                 self.aws_region,
+            "TF_VAR_environment_id":             platform_out["environment_id"],
+            "TF_VAR_cluster_id":                 platform_out["cluster_id"],
+            "TF_VAR_cluster_rest_endpoint":      platform_out["cluster_rest_endpoint"],
+            "TF_VAR_sa_terraform_manager_id":    platform_out["sa_terraform_manager_id"],
+            "TF_VAR_sa_cfk_connect_id":          platform_out["sa_cfk_connect_id"],
+            "TF_VAR_sa_monitoring_id":           platform_out["sa_monitoring_id"],
         }
 
 
