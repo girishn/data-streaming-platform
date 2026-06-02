@@ -155,6 +155,9 @@ def main() -> None:
                         help="Also destroy the S3 bucket and DynamoDB table (irreversible)")
     parser.add_argument("--k8s-only", action="store_true",
                         help="Only remove Kubernetes resources, skip Terraform destroy")
+    parser.add_argument("--cluster-only", action="store_true",
+                        help="Only destroy cluster pipeline resources (topics/ACLs/keys/secrets). "
+                             "Must run from inside the VPC. Leaves K8s, EKS, and Confluent infra intact.")
     args = parser.parse_args()
 
     for tool in ["terraform", "kubectl", "helm", "aws"]:
@@ -163,6 +166,24 @@ def main() -> None:
     cfg = Config.load(args.env)
     console.print(f"\n[bold]Target environment:[/] [cyan]{args.env}[/]  "
                   f"({cfg.environment_name})\n")
+
+    if args.cluster_only:
+        console.print(Panel.fit(
+            "[bold red]This will destroy cluster pipeline resources only.[/]\n\n"
+            "Topics, ACLs, API keys, and Secrets Manager secrets will be deleted.\n"
+            "Topic data and consumer group offsets will be permanently lost.\n"
+            "K8s, EKS, and Confluent Cloud infrastructure are NOT affected.",
+            title="⚠ Destructive Operation",
+        ))
+        confirm("Destroy cluster pipeline resources?", yes=args.yes)
+        tf_init("infra/networking", cfg, cfg.networking_backend_key)
+        networking_out = tf_outputs("infra/networking", cfg.networking_tf_env())
+        tf_init("infra/platform", cfg, cfg.platform_backend_key)
+        platform_out = tf_outputs("infra/platform", cfg.platform_tf_env(networking_out))
+        destroy_cluster_pipeline(cfg, platform_out)
+        console.print()
+        console.rule("[bold green]Cluster pipeline destroyed[/]")
+        return
 
     console.print(Panel.fit(
         "[bold red]This will destroy the entire data streaming platform.[/]\n\n"
