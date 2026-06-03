@@ -68,9 +68,12 @@ uv run --project scripts scripts/cluster_pipeline.py --env dev --via-bastion
 
 # Manual (must run from inside the VPC):
 uv run --project scripts scripts/cluster_pipeline.py --env dev
+
+# Destroy (also requires in-VPC execution):
+uv run --project scripts scripts/cluster_pipeline.py --env dev --via-bastion --destroy
 ```
 
-Creates API keys, Secrets Manager secrets, topics, ACLs, and quotas.
+Creates API keys, Secrets Manager secrets, topics, and ACLs.
 Schema Registry is not activated (ESSENTIALS SR is lazily provisioned on first schema write).
 
 ### Phase 2 — activate Schema Registry
@@ -92,6 +95,7 @@ uv run --project scripts scripts/provision.py --env dev --skip-terraform
 | `--env` | Target environment (`dev` or `prod`). Required. |
 | `--via-bastion` | Launch a temporary SSM-managed EC2 t3.micro in the VPC private subnet, run the pipeline on it, then terminate. Safe to call from a developer laptop. Requires the EKS pipeline to have been applied first (instance profile created by `infra/eks`). |
 | `--activate-sr` | Phase 2: create SR API key + role binding and write SR secret. Works with or without `--via-bastion`. |
+| `--destroy` | Destroy cluster pipeline resources (topics/ACLs/keys/secrets). Also requires in-VPC execution; combine with `--via-bastion` when running from outside the VPC. |
 | `--yes` | Skip the VPC confirmation prompt. Set automatically by `--via-bastion` on the remote invocation. |
 
 ---
@@ -121,7 +125,10 @@ Tears down in reverse order: K8s resources → cluster pipeline → EKS → Conf
 uv run --project scripts scripts/destroy.py --env dev
 uv run --project scripts scripts/destroy.py --env dev --yes
 
-# Cluster pipeline only (topics/ACLs/keys/secrets — must run from inside VPC)
+# Cluster pipeline only — via bastion (safe from outside VPC)
+uv run --project scripts scripts/destroy.py --env dev --cluster-only --via-bastion
+
+# Cluster pipeline only — manual (must run from inside VPC)
 uv run --project scripts scripts/destroy.py --env dev --cluster-only
 
 # K8s resources only (leaves all Terraform infra intact)
@@ -135,7 +142,8 @@ uv run --project scripts scripts/destroy.py --env dev --destroy-bootstrap
 |---|---|
 | `--env` | Target environment (`dev` or `prod`). Required. |
 | `--yes` | Skip confirmation prompts. |
-| `--cluster-only` | Destroy cluster pipeline resources only (topics, ACLs, API keys, Secrets Manager secrets). K8s, EKS, and Confluent infra are not affected. Must run from inside the VPC. |
+| `--cluster-only` | Destroy cluster pipeline resources only (topics, ACLs, API keys, Secrets Manager secrets). K8s, EKS, and Confluent infra are not affected. Combine with `--via-bastion` when running from outside the VPC. |
+| `--via-bastion` | Run the cluster pipeline destroy via a temporary SSM bastion in the VPC. Required when destroying from outside the VPC. Applies to the cluster pipeline step only; all other destroy steps run locally. |
 | `--k8s-only` | Remove Kubernetes resources only; skip all Terraform destroy. |
 | `--destroy-bootstrap` | Also delete the S3 bucket and DynamoDB table after everything else. Irreversible. |
 
@@ -167,6 +175,6 @@ uv run --project scripts scripts/status.py --env dev
 ### Full teardown
 
 ```sh
-uv run --project scripts scripts/destroy.py --env dev --yes
+uv run --project scripts scripts/destroy.py --env dev --yes --via-bastion
 uv run --project scripts scripts/status.py --env dev   # verify
 ```

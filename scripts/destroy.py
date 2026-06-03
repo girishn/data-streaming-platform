@@ -88,12 +88,17 @@ def delete_k8s_infrastructure() -> None:
     ok("Kubernetes infrastructure removed")
 
 
-def destroy_cluster_pipeline(cfg: Config, platform_out: dict) -> None:
+def destroy_cluster_pipeline(cfg: Config, platform_out: dict, via_bastion: bool = False) -> None:
     step("Destroying cluster pipeline resources (topics, ACLs, API keys, secrets)")
     if not platform_out.get("cluster_id"):
         warn("Platform outputs unavailable (state already destroyed) — skipping cluster pipeline destroy")
         return
-    warn("This must also run from inside the VPC — cluster REST endpoint is PrivateLink-only.")
+    if via_bastion:
+        from cluster_pipeline import run_via_bastion
+        run_via_bastion(cfg, activate_sr=False, destroy=True)
+        return
+    warn("This must run from inside the VPC — cluster REST endpoint is PrivateLink-only.")
+    warn("Use --via-bastion if running from outside the VPC.")
     tf_init("infra/cluster", cfg, cfg.cluster_backend_key)
     tf_destroy("infra/cluster", cfg.cluster_tf_env(platform_out))
     ok("Cluster pipeline resources destroyed")
@@ -160,7 +165,11 @@ def main() -> None:
                         help="Only remove Kubernetes resources, skip Terraform destroy")
     parser.add_argument("--cluster-only", action="store_true",
                         help="Only destroy cluster pipeline resources (topics/ACLs/keys/secrets). "
-                             "Must run from inside the VPC. Leaves K8s, EKS, and Confluent infra intact.")
+                             "Must run from inside the VPC or with --via-bastion.")
+    parser.add_argument("--via-bastion", action="store_true",
+                        help="Run the cluster pipeline destroy from a temporary SSM bastion in the "
+                             "VPC. Required when destroying from outside the VPC. Applies to the "
+                             "cluster pipeline step only.")
     args = parser.parse_args()
 
     for tool in ["terraform", "kubectl", "helm", "aws"]:
@@ -183,7 +192,7 @@ def main() -> None:
         networking_out = tf_outputs("infra/networking", cfg.networking_tf_env())
         tf_init("infra/platform", cfg, cfg.platform_backend_key)
         platform_out = tf_outputs("infra/platform", cfg.platform_tf_env(networking_out))
-        destroy_cluster_pipeline(cfg, platform_out)
+        destroy_cluster_pipeline(cfg, platform_out, via_bastion=args.via_bastion)
         console.print()
         console.rule("[bold green]Cluster pipeline destroyed[/]")
         return
@@ -209,7 +218,7 @@ def main() -> None:
         platform_out = tf_outputs("infra/platform", cfg.platform_tf_env(networking_out))
 
         # Cluster resources (topics/ACLs/keys) must be destroyed before the cluster itself
-        destroy_cluster_pipeline(cfg, platform_out)
+        destroy_cluster_pipeline(cfg, platform_out, via_bastion=args.via_bastion)
         destroy_eks(cfg, networking_out)
         destroy_platform(cfg, networking_out)
         destroy_networking(cfg)  # last — platform owns PrivateLink ENIs bound to the VPC

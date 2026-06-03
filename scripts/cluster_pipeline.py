@@ -169,8 +169,12 @@ def _wait_ssm_ready(cfg: Config, instance_id: str, timeout: int = 300) -> None:
     die(f"SSM agent not ready after {timeout}s — check instance profile and NAT gateway")
 
 
-def _build_pipeline_script(cfg: Config, secret_name: str, activate_sr: bool) -> str:
+def _build_pipeline_script(cfg: Config, secret_name: str, activate_sr: bool, destroy: bool = False) -> str:
     extra_flags = "--activate-sr" if activate_sr else ""
+    if destroy:
+        pipeline_cmd = f"scripts/cluster_pipeline.py --env {cfg.env} --yes --destroy"
+    else:
+        pipeline_cmd = f"scripts/cluster_pipeline.py --env {cfg.env} --yes {extra_flags}"
     return f"""\
 #!/bin/bash
 set -euo pipefail
@@ -204,7 +208,7 @@ export CONFLUENT_CLOUD_API_SECRET=$(python3 -c "import json,sys; print(json.load
 export AWS_DEFAULT_REGION={cfg.aws_region}
 
 echo "=== Run cluster pipeline ==="
-$UV run --project scripts scripts/cluster_pipeline.py --env {cfg.env} --yes {extra_flags}
+$UV run --project scripts {pipeline_cmd}
 """
 
 
@@ -218,6 +222,7 @@ def _send_ssm_command(
     secret_name: str,
     activate_sr: bool,
     log_prefix: str,
+    destroy: bool = False,
 ) -> str:
     """Send the pipeline shell script via SSM. Returns the command ID."""
     import boto3
@@ -228,7 +233,7 @@ def _send_ssm_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
         Parameters={
-            "commands": [_build_pipeline_script(cfg, secret_name, activate_sr)],
+            "commands": [_build_pipeline_script(cfg, secret_name, activate_sr, destroy=destroy)],
             "executionTimeout": ["1800"],
         },
         # S3 for archival; CloudWatch for live tailing
@@ -382,13 +387,15 @@ def _terminate_bastion(cfg: Config, instance_id: str) -> None:
     ok(f"Terminating bastion: {instance_id}")
 
 
-def run_via_bastion(cfg: Config, activate_sr: bool) -> None:
+def run_via_bastion(cfg: Config, activate_sr: bool, destroy: bool = False) -> None:
     """
     Launch a temporary EC2 t3.micro in the platform VPC private subnet,
-    run the cluster pipeline on it via SSM, then terminate the instance and
-    delete the ephemeral credential secret. Safe to call from outside the VPC.
+    run the cluster pipeline (or destroy) on it via SSM, then terminate the
+    instance and delete the ephemeral credential secret.
+    Safe to call from outside the VPC.
     """
-    step("Cluster pipeline via SSM bastion")
+    action = "destroy" if destroy else "pipeline"
+    step(f"Cluster {action} via SSM bastion")
     check_tool("aws")
 
     secret_name = _write_org_creds_secret(cfg)
@@ -408,7 +415,7 @@ def run_via_bastion(cfg: Config, activate_sr: bool) -> None:
         import boto3 as _boto3
         ssm = _boto3.client("ssm", region_name=cfg.aws_region)
         log_prefix = f"logs/cluster-pipeline/{cfg.env}"
-        command_id = _send_ssm_command(cfg, instance_id, secret_name, activate_sr, log_prefix)
+        command_id = _send_ssm_command(cfg, instance_id, secret_name, activate_sr, log_prefix, destroy=destroy)
         _tail_and_wait(cfg, ssm, command_id, instance_id)
 
     finally:
@@ -418,6 +425,15 @@ def run_via_bastion(cfg: Config, activate_sr: bool) -> None:
 
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
+
+def destroy_cluster(cfg: Config, platform_out: dict) -> None:
+    step("Destroying cluster pipeline (infra/cluster)")
+    env = cfg.cluster_tf_env(platform_out)
+    tf_init("infra/cluster", cfg, cfg.cluster_backend_key)
+    from _util import tf_destroy
+    tf_destroy("infra/cluster", env)
+    ok("Cluster pipeline resources destroyed")
+
 
 def provision_cluster(cfg: Config, platform_out: dict, schema_registry_active: bool) -> dict:
     step("Applying cluster pipeline (infra/cluster)")
@@ -500,6 +516,9 @@ def main() -> None:
     parser.add_argument("--via-bastion", action="store_true",
                         help="Launch a temporary SSM-managed EC2 bastion in the VPC and run the "
                              "pipeline from inside. Safe to call from a developer laptop.")
+    parser.add_argument("--destroy", action="store_true",
+                        help="Destroy cluster pipeline resources (topics/ACLs/keys/secrets). "
+                             "Must run from inside the VPC or with --via-bastion.")
     args = parser.parse_args()
 
     cfg = Config.load(args.env)
@@ -508,7 +527,7 @@ def main() -> None:
 
     # Bastion path short-circuits BEFORE the VPC gate — the calling machine is outside the VPC
     if args.via_bastion:
-        run_via_bastion(cfg, activate_sr=args.activate_sr)
+        run_via_bastion(cfg, activate_sr=args.activate_sr, destroy=args.destroy)
         return
 
     for tool in ["terraform", "aws"]:
@@ -528,6 +547,10 @@ def main() -> None:
 
     tf_init("infra/platform", cfg, cfg.platform_backend_key)
     platform_out = tf_outputs("infra/platform", cfg.platform_tf_env(networking_out))
+
+    if args.destroy:
+        destroy_cluster(cfg, platform_out)
+        return
 
     cluster_out = provision_cluster(cfg, platform_out, schema_registry_active=args.activate_sr)
 
