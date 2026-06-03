@@ -75,6 +75,16 @@ variable "public_access_cidrs" {
   default     = []
 }
 
+variable "tf_bucket" {
+  description = "Terraform state S3 bucket — used to scope the cluster pipeline bastion IAM policy"
+  type        = string
+}
+
+variable "tf_table" {
+  description = "Terraform state DynamoDB table — used to scope the cluster pipeline bastion IAM policy"
+  type        = string
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

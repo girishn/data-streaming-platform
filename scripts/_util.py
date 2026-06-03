@@ -197,6 +197,8 @@ class Config:
             "TF_VAR_vpc_id":                        out.get("vpc_id", ""),
             "TF_VAR_private_subnet_ids":            json.dumps(out.get("private_subnet_ids", [])),
             "TF_VAR_confluent_secrets_path_prefix": f"/{self.environment_name}/confluent",
+            "TF_VAR_tf_bucket":                     self.tf_bucket,
+            "TF_VAR_tf_table":                      self.tf_table,
             "TF_VAR_node_instance_types":           json.dumps(self.node_instance_types),
             "TF_VAR_node_min_size":                 str(self.node_min_size),
             "TF_VAR_node_max_size":                 str(self.node_max_size),

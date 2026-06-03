@@ -20,6 +20,7 @@
 | IRSA | cfk-connect + csi-secrets-store ServiceAccounts annotated | CLAUDE.md requirement — IRSA everywhere |
 | EKS | Private endpoint only, managed node group m6i.xlarge, 2–6 nodes | Generic AWS Terraform (no KB query required per CLAUDE.md) |
 | Cluster pipeline execution | In-VPC only (bastion/EKS job/CodeBuild) | `10-Operational-Patterns/gitops-terraform.md` + KB gap — PrivateLink REST endpoint validation |
+| Bastion automation | SSM (no SSH), private subnet, ephemeral SM secret under `/{env}/pipeline/`, S3 log output | ADR-014 |
 | Connect worker permissions | ACLs (not RBAC) on internal topics + group | `09-Security-Architecture/rbac.md` — self-managed Connect uses ACLs |
 | Topic naming | `{domain}.{entity}.{event-type}.v{N}` | `topic-design-framework.md` — lowercase dot-separated |
 | Partition sizing | `max(throughput/10MB_s, max_consumers) × 2–3×` | `02-Broker-Infrastructure/partitioning-strategies.md` |
@@ -27,7 +28,7 @@
 | Default quota floor | 10 MB/s ingress + egress per principal `(*,*)` | `13-Performance-Tuning/quota-management.md` |
 
 ## Open / Blocked Decisions
-- **Cluster pipeline apply** — `infra/cluster/` written; awaiting first apply from inside VPC. Unblocks: secret-sync pod, Connect worker auth, SR activation path.
+- **Cluster pipeline apply** — `infra/cluster/` written; automated via `--via-bastion`. Requires EKS re-apply first (`provision.py`) to create the bastion instance profile. Then: `cluster_pipeline.py --env dev --via-bastion`.
 - **[KB_GAP] Connect ACL operations** — exact READ/WRITE/CREATE/DESCRIBE set per resource type for Connect worker not confirmed by KB. `acls.tf` implements READ/WRITE/DESCRIBE as starting set; validate against Confluent docs before production apply.
 - **quota default resolved** — `principals = []` rejected by provider (minimum 1). Workaround: per-SA quota resources for the three platform accounts. New onboarded SAs get quota added at self-service time.
 - **SR Phase 2** — pending first schema registration; then `--activate-sr` re-run.
@@ -43,7 +44,7 @@
 ## Next Session Start Point
 1. Run `list_topics()` + read this file.
 2. Next build options (choose one):
-   a. **Apply cluster pipeline from inside VPC** — `scripts/cluster_pipeline.py --env dev`. Validates ACL operations before apply (KB_GAP above must be resolved).
+   a. **Apply cluster pipeline** — Re-apply EKS pipeline first (`provision.py --env dev`) to create the bastion instance profile, then `cluster_pipeline.py --env dev --via-bastion`. Validates ACL operations before apply (KB_GAP above must be resolved).
    b. **Self-service pipeline** (`self-service/`) — OPA conftest policies, producer/consumer/connector onboarding gates.
 3. After cluster pipeline Phase 1: Connect workers authenticate, secret-sync pod becomes Available.
-4. After first schema registered: `cluster_pipeline.py --env dev --activate-sr`, then `provision.py --env dev --skip-terraform` to restore SR block in Connect CR.
+4. After first schema registered: `cluster_pipeline.py --env dev --via-bastion --activate-sr`, then `provision.py --env dev --skip-terraform` to restore SR block in Connect CR.

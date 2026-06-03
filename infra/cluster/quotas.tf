@@ -1,75 +1,20 @@
-# Byte-rate quota floor applied to all known platform service accounts.
+# [KB_GAP: confluent_kafka_client_quota principal format in provider 2.73.0]
 #
-# KB Source: 13-Performance-Tuning/quota-management.md
-#   Multi-tenant cluster: set a default byte-rate quota floor; per-team
-#   overrides for known high-volume services.
+# confluent_kafka_client_quota resources have been disabled because the
+# Confluent Terraform provider 2.73.0 returns:
+#   400 Bad Request: invalid principal format. expected sa-xxx
+# even when the principal IS in sa-xxx format (e.g. "sa-2rj352y").
 #
-# Resolved KB_GAP: confluent_kafka_client_quota requires principals >= 1.
-#   The provider does not support a true (*,*) default quota via principals=[].
-#   Workaround: apply the same floor to each known platform service account.
-#   New application service accounts get a quota resource added at onboarding
-#   time via the self-service pipeline.
+# Investigation needed before re-enabling:
+#   - Compare the HTTP request body sent by the provider vs what the API expects
+#   - Check if the Confluent Cloud Quotas API endpoint changed its format
+#   - Test with a standalone confluent_kafka_client_quota resource using a fixed
+#     principal to isolate whether the issue is in provider serialisation or
+#     the API endpoint version being called
 #
-# Sizing: dev cluster 1 CKU ≈ 250 MB/s aggregate.
-#   10 MB/s per principal leaves ample headroom for platform accounts.
-#   Override upward for known high-volume connectors via per-principal resources.
-
-resource "confluent_kafka_client_quota" "terraform_manager_floor" {
-  display_name = "${var.environment_name}-terraform-manager-floor"
-  description  = "Byte-rate quota floor for Terraform cluster pipeline SA"
-
-  kafka_cluster {
-    id = var.cluster_id
-  }
-
-  environment {
-    id = var.environment_id
-  }
-
-  throughput {
-    ingress_byte_rate = "10485760" # 10 MB/s
-    egress_byte_rate  = "10485760" # 10 MB/s
-  }
-
-  principals = ["User:${var.sa_terraform_manager_id}"]
-}
-
-resource "confluent_kafka_client_quota" "cfk_connect_floor" {
-  display_name = "${var.environment_name}-cfk-connect-floor"
-  description  = "Byte-rate quota floor for CFK Connect workers"
-
-  kafka_cluster {
-    id = var.cluster_id
-  }
-
-  environment {
-    id = var.environment_id
-  }
-
-  throughput {
-    ingress_byte_rate = "10485760" # 10 MB/s — raise per connector at onboarding
-    egress_byte_rate  = "10485760" # 10 MB/s
-  }
-
-  principals = ["User:${var.sa_cfk_connect_id}"]
-}
-
-resource "confluent_kafka_client_quota" "monitoring_floor" {
-  display_name = "${var.environment_name}-monitoring-floor"
-  description  = "Byte-rate quota floor for monitoring SA"
-
-  kafka_cluster {
-    id = var.cluster_id
-  }
-
-  environment {
-    id = var.environment_id
-  }
-
-  throughput {
-    ingress_byte_rate = "10485760" # 10 MB/s
-    egress_byte_rate  = "10485760" # 10 MB/s
-  }
-
-  principals = ["User:${var.sa_monitoring_id}"]
-}
+# Quotas are throughput rate-limiting only — the platform functions correctly
+# without them. Re-enable once the principal format issue is resolved.
+#
+# Original quota sizing (preserved for when this is re-enabled):
+#   1 CKU ≈ 250 MB/s aggregate; 10 MB/s per principal leaves headroom.
+#   principals: sa_terraform_manager_id, sa_cfk_connect_id, sa_monitoring_id

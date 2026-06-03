@@ -197,3 +197,111 @@ resource "aws_iam_role_policy_attachment" "csi_secrets_store" {
   policy_arn = aws_iam_policy.csi_secrets_store.arn
   role       = aws_iam_role.csi_secrets_store_irsa.name
 }
+
+# ── Cluster Pipeline Bastion ──────────────────────────────────────────────────
+# EC2 instance profile for the temporary SSM bastion that runs infra/cluster.
+# Kept separate from the CFK Connect IRSA role — the bastion needs TF state
+# access and secret-write permission that Connect workers must never have.
+# Org-level Confluent API key lives under pipeline_secrets_path_prefix, not
+# confluent_secrets_path_prefix, so Connect pods cannot read it.
+
+resource "aws_iam_role" "cluster_pipeline_bastion" {
+  name = "${var.cluster_name}-cluster-pipeline-bastion"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_instance_profile" "cluster_pipeline_bastion" {
+  name = "${var.cluster_name}-cluster-pipeline-bastion"
+  role = aws_iam_role.cluster_pipeline_bastion.name
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "bastion_ssm_core" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.cluster_pipeline_bastion.name
+}
+
+resource "aws_iam_policy" "cluster_pipeline_bastion" {
+  name        = "${var.cluster_name}-cluster-pipeline-bastion"
+  description = "Cluster pipeline bastion: Terraform state, cluster secret management, org credential read"
+  tags        = local.common_tags
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TFStateBucket"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.tf_bucket}",
+          "arn:aws:s3:::${var.tf_bucket}/*",
+        ]
+      },
+      {
+        Sid    = "TFStateLock"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/${var.tf_table}"
+      },
+      {
+        Sid    = "ClusterSecretsManage"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:CreateSecret",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetResourcePolicy",
+          "secretsmanager:TagResource",
+          "secretsmanager:DeleteSecret",
+        ]
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.confluent_secrets_path_prefix}/*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+        ]
+        Resource = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/data-streaming/*/cluster-pipeline*"
+      },
+      {
+        Sid    = "OrgCredentialsRead"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+        ]
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:/${var.environment_name}/pipeline/*"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "cluster_pipeline_bastion" {
+  policy_arn = aws_iam_policy.cluster_pipeline_bastion.arn
+  role       = aws_iam_role.cluster_pipeline_bastion.name
+}

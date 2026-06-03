@@ -34,3 +34,8 @@ output "csi_secrets_store_irsa_role_arn" {
 output "node_role_arn" {
   value = aws_iam_role.eks_nodes.arn
 }
+
+output "cluster_pipeline_instance_profile" {
+  description = "EC2 instance profile name for the cluster pipeline SSM bastion"
+  value       = aws_iam_instance_profile.cluster_pipeline_bastion.name
+}
