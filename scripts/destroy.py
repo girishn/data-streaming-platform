@@ -9,6 +9,7 @@ Required env vars — same as provision.py.
 """
 
 import argparse
+import concurrent.futures
 import subprocess
 import sys
 from pathlib import Path
@@ -219,8 +220,14 @@ def main() -> None:
 
         # Cluster resources (topics/ACLs/keys) must be destroyed before the cluster itself
         destroy_cluster_pipeline(cfg, platform_out, via_bastion=args.via_bastion)
-        destroy_eks(cfg, networking_out)
-        destroy_platform(cfg, networking_out)
+
+        info("Destroying EKS and Confluent Cloud infrastructure in parallel …")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            f_eks = executor.submit(destroy_eks, cfg, networking_out)
+            f_platform = executor.submit(destroy_platform, cfg, networking_out)
+        f_eks.result()
+        f_platform.result()
+
         destroy_networking(cfg)  # last — platform owns PrivateLink ENIs bound to the VPC
 
     if args.destroy_bootstrap:
