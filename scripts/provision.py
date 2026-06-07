@@ -9,6 +9,7 @@ Required env vars — see scripts/bootstrap.py for the full list.
 """
 
 import argparse
+import concurrent.futures
 import json
 import re
 import sys
@@ -279,8 +280,14 @@ def main() -> None:
         eks_out = tf_outputs("infra/eks", cfg.eks_tf_env(networking_out))
     else:
         networking_out = provision_networking(cfg)
-        platform_out = provision_confluent(cfg, networking_out)
-        eks_out = provision_eks(cfg, networking_out)
+
+        info("Provisioning Confluent Cloud and EKS in parallel …")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            f_confluent = executor.submit(provision_confluent, cfg, networking_out)
+            f_eks = executor.submit(provision_eks, cfg, networking_out)
+        # Both futures are done; .result() re-raises any exception from the worker.
+        platform_out = f_confluent.result()
+        eks_out = f_eks.result()
 
     update_kubeconfig(eks_out["cluster_name"], cfg.aws_region)
     install_cert_manager()
