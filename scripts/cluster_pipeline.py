@@ -426,6 +426,35 @@ def run_via_bastion(cfg: Config, activate_sr: bool, destroy: bool = False) -> No
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
 
+def _cleanup_scheduled_deletion_secrets(cfg: Config) -> None:
+    """Force-delete any platform secrets in scheduled-deletion state before Terraform apply.
+
+    A prior partial destroy leaves secrets scheduled for deletion. Terraform's CreateSecret
+    then fails with InvalidRequestException. Running this on the bastion (which has the
+    cluster-pipeline instance profile) clears them so the apply can recreate from scratch.
+    """
+    import boto3
+    sm = boto3.client("secretsmanager", region_name=cfg.aws_region)
+    prefix = f"/{cfg.environment_name}/confluent/"
+
+    paginator = sm.get_paginator("list_secrets")
+    deleted = []
+    for page in paginator.paginate(
+        Filters=[{"Key": "name", "Values": [prefix]}],
+        IncludePlannedDeletion=True,
+    ):
+        for secret in page["SecretList"]:
+            if secret.get("DeletedDate"):
+                sm.delete_secret(SecretId=secret["ARN"], ForceDeleteWithoutRecovery=True)
+                deleted.append(secret["Name"])
+
+    if deleted:
+        for name in deleted:
+            ok(f"Force-deleted scheduled-deletion secret: {name}")
+    else:
+        info("No scheduled-deletion secrets to clean up")
+
+
 def destroy_cluster(cfg: Config, platform_out: dict) -> None:
     step("Destroying cluster pipeline (infra/cluster)")
     env = cfg.cluster_tf_env(platform_out)
@@ -437,6 +466,9 @@ def destroy_cluster(cfg: Config, platform_out: dict) -> None:
 
 def provision_cluster(cfg: Config, platform_out: dict, schema_registry_active: bool) -> dict:
     step("Applying cluster pipeline (infra/cluster)")
+
+    step("Pre-flight: cleaning up scheduled-deletion secrets")
+    _cleanup_scheduled_deletion_secrets(cfg)
 
     env = cfg.cluster_tf_env(platform_out)
 
