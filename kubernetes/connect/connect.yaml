@@ -47,7 +47,7 @@ spec:
       bootstrapEndpoint: "" # replace with cluster_bootstrap_endpoint from infra/platform output
       authentication:
         type: plain
-        jaasConfig:
+        jaasConfigPassThrough:
           secretRef: connect-kafka-jaas  # K8s Secret synced by secret-sync.yaml via CSI
       tls:
         enabled: true
