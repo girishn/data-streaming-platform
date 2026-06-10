@@ -18,7 +18,7 @@ metadata:
 spec:
   isCA: true
   commonName: cfk-ca
-  secretName: cfk-ca-secret
+  secretName: ca-pair-sslcerts
   privateKey:
     algorithm: ECDSA
     size: 256
@@ -34,4 +34,4 @@ metadata:
   namespace: confluent
 spec:
   ca:
-    secretName: cfk-ca-secret
+    secretName: ca-pair-sslcerts
