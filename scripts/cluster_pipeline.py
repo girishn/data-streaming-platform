@@ -429,24 +429,31 @@ def run_via_bastion(cfg: Config, activate_sr: bool, destroy: bool = False) -> No
 def _cleanup_scheduled_deletion_secrets(cfg: Config) -> None:
     """Force-delete any platform secrets in scheduled-deletion state before Terraform apply.
 
-    A prior partial destroy leaves secrets scheduled for deletion. Terraform's CreateSecret
-    then fails with InvalidRequestException. Running this on the bastion (which has the
-    cluster-pipeline instance profile) clears them so the apply can recreate from scratch.
+    Uses DescribeSecret on each known secret path (no ListSecrets needed) so the check
+    works within the existing bastion IAM policy. A prior partial destroy leaves these
+    secrets scheduled for deletion; Terraform CreateSecret then fails with
+    InvalidRequestException until they are purged.
     """
     import boto3
     sm = boto3.client("secretsmanager", region_name=cfg.aws_region)
-    prefix = f"/{cfg.environment_name}/confluent/"
+    prefix = f"/{cfg.environment_name}/confluent"
+    known_secrets = [
+        f"{prefix}/cfk-connect-jaas",
+        f"{prefix}/cfk-connect-kafka",
+        f"{prefix}/terraform-manager-kafka",
+        f"{prefix}/monitoring-kafka",
+        f"{prefix}/schema-registry",  # Phase 2 SR secret
+    ]
 
-    paginator = sm.get_paginator("list_secrets")
     deleted = []
-    for page in paginator.paginate(
-        Filters=[{"Key": "name", "Values": [prefix]}],
-        IncludePlannedDeletion=True,
-    ):
-        for secret in page["SecretList"]:
-            if secret.get("DeletedDate"):
-                sm.delete_secret(SecretId=secret["ARN"], ForceDeleteWithoutRecovery=True)
-                deleted.append(secret["Name"])
+    for name in known_secrets:
+        try:
+            meta = sm.describe_secret(SecretId=name)
+            if meta.get("DeletedDate"):
+                sm.delete_secret(SecretId=meta["ARN"], ForceDeleteWithoutRecovery=True)
+                deleted.append(name)
+        except sm.exceptions.ResourceNotFoundException:
+            pass  # doesn't exist yet — nothing to clean up
 
     if deleted:
         for name in deleted:

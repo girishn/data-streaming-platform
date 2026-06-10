@@ -279,14 +279,6 @@ resource "aws_iam_policy" "cluster_pipeline_bastion" {
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.confluent_secrets_path_prefix}/*"
       },
       {
-        # ListSecrets does not support resource-level restrictions — must be *.
-        # Scoped to the platform prefix via the API call itself (not IAM).
-        Sid      = "ClusterSecretsListScheduledDeletion"
-        Effect   = "Allow"
-        Action   = ["secretsmanager:ListSecrets"]
-        Resource = "*"
-      },
-      {
         Sid    = "CloudWatchLogs"
         Effect = "Allow"
         Action = [
