@@ -1,50 +1,72 @@
 # Platform State
 
 ## Build Phase
-**Infrastructure Pipeline** — Complete. Confluent Cloud base + EKS Terraform applied. cert-manager, CFK operator, CSI Secrets Store driver all running. Connect CR applied (SR block stripped — awaiting cluster pipeline). secret-sync pod deployed (pending JAAS secret from cluster pipeline).
+**Infrastructure Pipeline** — Complete. Networking + Confluent Cloud + EKS Terraform all applied.
+cert-manager, CFK operator (v1), CSI Secrets Store driver (with tokenRequests fixed) all running.
 
-**Cluster Pipeline** — `infra/cluster/` Terraform written. Awaiting first apply from inside the VPC. Must run via `scripts/cluster_pipeline.py` (not provision.py). Phase 1 (default): API keys + secrets + topics + ACLs + quotas. Phase 2 (`--activate-sr`): SR API key + role binding, after first schema registration.
+**Cluster Pipeline** — Phase 1 applied successfully (topics, ACLs, API keys, JAAS secret written to Secrets Manager).
+Cluster pipeline is idempotent: pre-flight step force-deletes scheduled-deletion secrets before apply.
+
+**K8s / Connect** — CFK Connect CR applied. Workers were coming up at end of session; destroy running now.
+Connect auth uses `jaasConfigPassThrough` (full JAAS string from Secrets Manager, not username= format).
+CA secret `ca-pair-sslcerts` created by cert-manager (cfk-ca Certificate).
+
+**Current status** — `destroy.py --env dev --yes --via-bastion` running at end of session (2026-06-10).
 
 ## Decisions Made
 
 | Decision | Choice | KB Source |
 |---|---|---|
-| Cluster type | Dedicated (MULTI_ZONE, 2 CKU) | `01-Core-Concepts/kafka-vs-confluent.md` — Dedicated required for PrivateLink + broker-side schema validation |
-| Networking | AWS PrivateLink + Route 53 PHZ | `09-Security-Architecture/private-networking.md` — preferred for new AWS deployments |
+| Cluster type | Dedicated (SINGLE_ZONE, 1 CKU dev / MULTI_ZONE 2 CKU prod) | `01-Core-Concepts/kafka-vs-confluent.md` |
+| Networking | AWS PrivateLink + Route 53 PHZ | `09-Security-Architecture/private-networking.md` |
 | Terraform model | Two-pipeline (infra / cluster) | `10-Operational-Patterns/gitops-terraform.md` |
 | Platform service accounts | terraform-manager (CloudClusterAdmin), cfk-connect, monitoring (MetricsViewer) | `09-Security-Architecture/rbac.md` |
 | API key storage | AWS Secrets Manager | `10-Operational-Patterns/gitops-terraform.md` — CSI Secrets Provider pattern |
 | Schema Registry | Confluent Cloud managed, ESSENTIALS package | `10-Operational-Patterns/gitops-terraform.md` |
-| CFK internal auth | mTLS via cert-manager + cfk-ca-issuer | `09-Security-Architecture/mtls-oauth.md` — separate internal/external auth paths |
-| CFK → Confluent Cloud auth | SASL/PLAIN over TLS, API key from Secrets Manager via CSI | `09-Security-Architecture/mtls-oauth.md` + `10-Operational-Patterns/gitops-terraform.md` |
-| IRSA | cfk-connect + csi-secrets-store ServiceAccounts annotated | CLAUDE.md requirement — IRSA everywhere |
-| EKS | Private endpoint only, managed node group m6i.xlarge, 2–6 nodes | Generic AWS Terraform (no KB query required per CLAUDE.md) |
-| Cluster pipeline execution | In-VPC only (bastion/EKS job/CodeBuild) | `10-Operational-Patterns/gitops-terraform.md` + KB gap — PrivateLink REST endpoint validation |
-| Bastion automation | SSM (no SSH), private subnet, ephemeral SM secret under `/{env}/pipeline/`, S3 log output | ADR-014 |
-| Connect worker permissions | ACLs (not RBAC) on internal topics + group | `09-Security-Architecture/rbac.md` — self-managed Connect uses ACLs |
-| Topic naming | `{domain}.{entity}.{event-type}.v{N}` | `topic-design-framework.md` — lowercase dot-separated |
+| CFK internal auth | mTLS via cert-manager + cfk-ca-issuer; CA secret = `ca-pair-sslcerts` | `09-Security-Architecture/mtls-oauth.md` |
+| CFK → Confluent Cloud auth | SASL/PLAIN, full JAAS string via `jaasConfigPassThrough.secretRef`, key=`plain.txt` | `09-Security-Architecture/mtls-oauth.md` |
+| IRSA | cfk-connect + csi-secrets-store ServiceAccounts annotated | CLAUDE.md requirement |
+| EKS | Private endpoint only, managed node group m6i.xlarge, 2–6 nodes | Generic AWS Terraform |
+| Cluster pipeline execution | In-VPC only via SSM bastion | `10-Operational-Patterns/gitops-terraform.md` |
+| Bastion automation | SSM (no SSH), private subnet, ephemeral SM secret under `/{env}/pipeline/` | ADR-014 |
+| Connect internal topic ACLs | CREATE + READ + WRITE + DESCRIBE on connect-configs/offsets/status | inferred — KB_GAP partially resolved |
+| Connect consumer group ACL | READ on group `connect` (= CFK CR name) | inferred from CFK CR name |
+| Connect exactly-once | `exactly.once.source.enabled=true` in configOverrides | confirmed required for Debezium |
+| Connect transactional ID ACLs | WRITE + DESCRIBE on TRANSACTIONAL_ID `connect` (PREFIXED) | required for exactly-once source |
+| Connector topic ACLs | Added at connector deploy time via self-service pipeline (not in acls.tf) | architecture decision |
+| Topic auto-creation | Off (Confluent Dedicated default); topics created topic-first via self-service | governance decision |
+| Topic naming | `{domain}.{entity}.{event-type}.v{N}` | `topic-design-framework.md` |
 | Partition sizing | `max(throughput/10MB_s, max_consumers) × 2–3×` | `02-Broker-Infrastructure/partitioning-strategies.md` |
-| SR activation | Two-phase: Phase 1 no SR, Phase 2 `schema_registry_active=true` after first schema | KB gap — ESSENTIALS lazy provisioning; `ADR-013` |
-| Default quota floor | 10 MB/s ingress + egress per principal `(*,*)` | `13-Performance-Tuning/quota-management.md` |
+| SR activation | Two-phase: Phase 1 no SR, Phase 2 `--activate-sr` after first schema | ADR-013 |
+| Provision/destroy parallelism | infra/platform + infra/eks run in parallel (both only need networking_out) | code decision |
 
 ## Open / Blocked Decisions
-- **Cluster pipeline apply** — `infra/cluster/` written; automated via `--via-bastion`. Requires EKS re-apply first (`provision.py`) to create the bastion instance profile. Then: `cluster_pipeline.py --env dev --via-bastion`.
-- **[KB_GAP] Connect ACL operations** — exact READ/WRITE/CREATE/DESCRIBE set per resource type for Connect worker not confirmed by KB. `acls.tf` implements READ/WRITE/DESCRIBE as starting set; validate against Confluent docs before production apply.
-- **quota default resolved** — `principals = []` rejected by provider (minimum 1). Workaround: per-SA quota resources for the three platform accounts. New onboarded SAs get quota added at self-service time.
-- **SR Phase 2** — pending first schema registration; then `--activate-sr` re-run.
+- **[KB_GAP] Connect ACL operations** — partially resolved. CREATE/READ/WRITE/DESCRIBE confirmed for internal topics; DESCRIBE_CONFIGS unconfirmed (probably not needed without broker-side config reads). Monitor Connect worker startup logs next provision for ACL errors.
+- **[KB_GAP] confluent_kafka_client_quota principal format** — provider 2.73.0 returns 400 on valid sa-xxx principals. Quota resources disabled in `infra/cluster/quotas.tf`. Re-enable once provider bug is resolved.
+- **SR Phase 2** — pending first schema registration; then `cluster_pipeline.py --env dev --via-bastion --activate-sr`.
 - **Self-service pipeline** (`self-service/`) — OPA policies, onboarding gates. Not started.
+- **Connect workers fully validated** — destroy interrupted validation. Next provision: confirm workers reach Running state and show successful broker connection in logs.
 
 ## KB Gaps
-- `confluent_schema_registry_cluster resource vs data source in Confluent TF provider v2.x` — KB has no guidance on which TF resource/data-source type to use for Schema Registry in provider v2.x. Fixed empirically: provider v2.x auto-provisions SR via `stream_governance` on the environment; `confluent_schema_registry_cluster` is now a data source, not a resource. `confluent_schema_registry_region` data source was removed entirely.
-- `Confluent Cloud network zones parameter format for ap-southeast-2` — KB has no guidance on the zone identifier format for `confluent_network.zones`. AWS AZ names (`ap-southeast-2a`) are rejected ("zone(s) are invalid"). Fix: removed `zones` from `confluent_network`; let Confluent choose zones automatically. VPC endpoint uses all private subnet IDs so ENIs are created in whatever AZs the endpoint service supports.
-- `Confluent ESSENTIALS Schema Registry lazy provisioning` — `stream_governance { package = "ESSENTIALS" }` on `confluent_environment` sets the billing package only; SR cluster is NOT created until the first schema is registered (lazy). Any data source read before that loops forever. Fix: all SR resources removed from infra pipeline entirely. SR data source, SR role binding (`ResourceOwner`), SR API key, SR Secrets Manager entry, and SR outputs all moved to cluster pipeline scope. `provision.py` SR URL injection is now a no-op if output absent.
-- `Confluent Dedicated SINGLE_ZONE vs MULTI_ZONE for non-production environments` — KB has no guidance. MULTI_ZONE Dedicated requires minimum 2 CKUs; SINGLE_ZONE allows 1 CKU. PrivateLink works on SINGLE_ZONE Dedicated. Decision: dev uses SINGLE_ZONE + 1 CKU (cost saving); prod uses MULTI_ZONE + 2 CKU. `cluster_availability` added as per-env variable.
-- `Confluent TF provider Kafka API key sync for PrivateLink-only clusters` — After creating a cluster-scoped API key, the Confluent TF provider validates it by calling the cluster REST endpoint. With `dns_config { resolution = "PRIVATE" }`, that endpoint resolves to the PrivateLink private IP — unreachable from outside the VPC. No provider flag to skip this check. Fix: removed all cluster-scoped API keys from infra pipeline. They are created in the cluster pipeline which runs from inside the VPC. Secrets Manager secrets also moved to cluster pipeline.
+- `confluent_schema_registry_cluster resource vs data source in Confluent TF provider v2.x` — Fixed empirically: provider v2.x auto-provisions SR via `stream_governance`; `confluent_schema_registry_cluster` is a data source, not a resource.
+- `Confluent Cloud network zones parameter format for ap-southeast-2` — Removed `zones` from `confluent_network`; let Confluent choose zones automatically.
+- `Confluent ESSENTIALS Schema Registry lazy provisioning` — SR not created until first schema registered. All SR resources moved to cluster pipeline scope (Phase 2).
+- `Confluent Dedicated SINGLE_ZONE vs MULTI_ZONE for non-production` — dev uses SINGLE_ZONE + 1 CKU; prod uses MULTI_ZONE + 2 CKU.
+- `Confluent TF provider Kafka API key sync for PrivateLink-only clusters` — cluster-scoped keys moved to cluster pipeline (runs in-VPC).
+- `confluent_kafka_client_quota principal format in provider 2.73.0` — 400 Bad Request on valid sa-xxx principals. Quota resources disabled.
+
+## Known Fixes Applied (do not re-investigate)
+- CSI driver: `tokenRequests: [{audience: sts.amazonaws.com}]` required in values.yaml for IRSA
+- CFK CA secret must be named `ca-pair-sslcerts` (cert-manager Certificate secretName + Issuer ca.secretName)
+- `SecretProviderClass` key must be `plain.txt` (not `plain-jaas.conf`) for CFK auth
+- Connect CR must use `jaasConfigPassThrough.secretRef` (not `jaasConfig.secretRef`) — JAAS string format, not username= format
+- Bastion IAM: `secretsmanager:RestoreSecret` added to ClusterSecretsManage statement
+- Cluster pipeline pre-flight: uses `DescribeSecret` on known paths (not `ListSecrets`) to purge scheduled-deletion secrets
 
 ## Next Session Start Point
 1. Run `list_topics()` + read this file.
-2. Next build options (choose one):
-   a. **Apply cluster pipeline** — Re-apply EKS pipeline first (`provision.py --env dev`) to create the bastion instance profile, then `cluster_pipeline.py --env dev --via-bastion`. Validates ACL operations before apply (KB_GAP above must be resolved).
-   b. **Self-service pipeline** (`self-service/`) — OPA conftest policies, producer/consumer/connector onboarding gates.
-3. After cluster pipeline Phase 1: Connect workers authenticate, secret-sync pod becomes Available.
-4. After first schema registered: `cluster_pipeline.py --env dev --via-bastion --activate-sr`, then `provision.py --env dev --skip-terraform` to restore SR block in Connect CR.
+2. Run `uv run --project scripts scripts/provision.py --env dev` (full provision — networking+platform+EKS applied fresh).
+3. Run `uv run --project scripts scripts/cluster_pipeline.py --env dev --via-bastion`.
+4. Verify Connect workers reach Running state: `kubectl get pod -n confluent` + `kubectl logs -n confluent -l app=connect --tail=50`.
+5. Once Connect workers healthy — start **self-service pipeline** (`self-service/`): OPA conftest policies, producer/consumer/connector onboarding gates.
+6. SR Phase 2 after first connector + schema registered: `cluster_pipeline.py --env dev --via-bastion --activate-sr` → `provision.py --env dev --skip-terraform`.
