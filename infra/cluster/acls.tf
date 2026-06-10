@@ -9,11 +9,12 @@
 #
 # [KB_GAP: Kafka Connect worker required ACL operations per resource type]
 # The KB confirms ACLs are required and names the internal topics and group,
-# but does not specify the exact operation set (READ/WRITE/CREATE/DESCRIBE/DELETE)
-# per resource type for the worker service account. The ACL resources below
-# are structured correctly (resource types, names, pattern types, principal)
-# but the operation fields are marked with TODO and must be validated against
-# Confluent's Connect worker ACL documentation before applying.
+# but does not specify the exact operation set per resource type. Applied set:
+#   internal topics (connect-configs/offsets/status): CREATE, READ, WRITE, DESCRIBE
+#   consumer group: READ
+# CREATE added proactively — internal topics don't pre-exist on a fresh cluster.
+# Still unconfirmed: whether DESCRIBE_CONFIGS or transactional-ID ACLs are needed
+# (required only if exactly-once delivery is enabled on the Connect worker).
 #
 # CFK Connect worker group.id: CFK uses the Connect CR name as the group.id
 # prefix. For the CR named "connect" in namespace "confluent", the worker
@@ -28,6 +29,22 @@ locals {
 # [KB_GAP] Replace TODO_OPERATION with the correct set for each resource.
 # Typical set for Connect internal topics: READ, WRITE, CREATE, DESCRIBE.
 # Each operation requires a separate confluent_kafka_acl resource.
+
+resource "confluent_kafka_acl" "connect_configs_create" {
+  kafka_cluster { id = var.cluster_id }
+  resource_type = "TOPIC"
+  resource_name = "connect-configs"
+  pattern_type  = "LITERAL"
+  principal     = local.connect_principal
+  host          = "*"
+  operation     = "CREATE"
+  permission    = "ALLOW"
+  rest_endpoint = var.cluster_rest_endpoint
+  credentials {
+    key    = confluent_api_key.terraform_manager_kafka.id
+    secret = confluent_api_key.terraform_manager_kafka.secret
+  }
+}
 
 resource "confluent_kafka_acl" "connect_configs_read" {
   kafka_cluster { id = var.cluster_id }
@@ -77,6 +94,22 @@ resource "confluent_kafka_acl" "connect_configs_describe" {
   }
 }
 
+resource "confluent_kafka_acl" "connect_offsets_create" {
+  kafka_cluster { id = var.cluster_id }
+  resource_type = "TOPIC"
+  resource_name = "connect-offsets"
+  pattern_type  = "LITERAL"
+  principal     = local.connect_principal
+  host          = "*"
+  operation     = "CREATE"
+  permission    = "ALLOW"
+  rest_endpoint = var.cluster_rest_endpoint
+  credentials {
+    key    = confluent_api_key.terraform_manager_kafka.id
+    secret = confluent_api_key.terraform_manager_kafka.secret
+  }
+}
+
 resource "confluent_kafka_acl" "connect_offsets_read" {
   kafka_cluster { id = var.cluster_id }
   resource_type = "TOPIC"
@@ -117,6 +150,22 @@ resource "confluent_kafka_acl" "connect_offsets_describe" {
   principal     = local.connect_principal
   host          = "*"
   operation     = "DESCRIBE"
+  permission    = "ALLOW"
+  rest_endpoint = var.cluster_rest_endpoint
+  credentials {
+    key    = confluent_api_key.terraform_manager_kafka.id
+    secret = confluent_api_key.terraform_manager_kafka.secret
+  }
+}
+
+resource "confluent_kafka_acl" "connect_status_create" {
+  kafka_cluster { id = var.cluster_id }
+  resource_type = "TOPIC"
+  resource_name = "connect-status"
+  pattern_type  = "LITERAL"
+  principal     = local.connect_principal
+  host          = "*"
+  operation     = "CREATE"
   permission    = "ALLOW"
   rest_endpoint = var.cluster_rest_endpoint
   credentials {
