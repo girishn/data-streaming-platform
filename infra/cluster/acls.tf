@@ -13,8 +13,8 @@
 #   internal topics (connect-configs/offsets/status): CREATE, READ, WRITE, DESCRIBE
 #   consumer group: READ
 # CREATE added proactively — internal topics don't pre-exist on a fresh cluster.
-# Still unconfirmed: whether DESCRIBE_CONFIGS or transactional-ID ACLs are needed
-# (required only if exactly-once delivery is enabled on the Connect worker).
+# Transactional-ID ACLs added (WRITE + DESCRIBE, PREFIXED on group.id "connect").
+# Still unconfirmed: whether DESCRIBE_CONFIGS is needed.
 #
 # CFK Connect worker group.id: CFK uses the Connect CR name as the group.id
 # prefix. For the CR named "connect" in namespace "confluent", the worker
@@ -234,6 +234,44 @@ resource "confluent_kafka_acl" "connect_group_read" {
   principal     = local.connect_principal
   host          = "*"
   operation     = "READ"
+  permission    = "ALLOW"
+  rest_endpoint = var.cluster_rest_endpoint
+  credentials {
+    key    = confluent_api_key.terraform_manager_kafka.id
+    secret = confluent_api_key.terraform_manager_kafka.secret
+  }
+}
+
+# ── Exactly-once source ACLs ──────────────────────────────────────────────────
+# Required when exactly.once.source.enabled=true on the Connect worker.
+# CFK uses the Connect CR name as the group.id; transactional IDs are formed as
+# "{group.id}{connector.name}{task.id}" — prefix "connect" covers all tasks.
+# PREFIXED pattern avoids enumerating per-connector transactional IDs.
+
+resource "confluent_kafka_acl" "connect_transactional_id_write" {
+  kafka_cluster { id = var.cluster_id }
+  resource_type = "TRANSACTIONAL_ID"
+  resource_name = local.connect_group_id
+  pattern_type  = "PREFIXED"
+  principal     = local.connect_principal
+  host          = "*"
+  operation     = "WRITE"
+  permission    = "ALLOW"
+  rest_endpoint = var.cluster_rest_endpoint
+  credentials {
+    key    = confluent_api_key.terraform_manager_kafka.id
+    secret = confluent_api_key.terraform_manager_kafka.secret
+  }
+}
+
+resource "confluent_kafka_acl" "connect_transactional_id_describe" {
+  kafka_cluster { id = var.cluster_id }
+  resource_type = "TRANSACTIONAL_ID"
+  resource_name = local.connect_group_id
+  pattern_type  = "PREFIXED"
+  principal     = local.connect_principal
+  host          = "*"
+  operation     = "DESCRIBE"
   permission    = "ALLOW"
   rest_endpoint = var.cluster_rest_endpoint
   credentials {
