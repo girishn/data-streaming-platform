@@ -8,6 +8,11 @@
 #   aws-secrets-provider/secrets-store-csi-driver-provider-aws \
 #   --namespace kube-system --set secrets-store-csi-driver.install=false
 
+# Token requests for IRSA — CSIDriver must request a projected SA token so the
+# AWS provider can exchange it for STS credentials via OIDC.
+tokenRequests:
+  - audience: "sts.amazonaws.com"
+
 # Sync mounted secrets to Kubernetes Secret objects
 # Required so CFK can reference them via secretRef
 syncSecret:
